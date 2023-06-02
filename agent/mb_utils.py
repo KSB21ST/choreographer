@@ -17,13 +17,26 @@ class WorldModel(nn.Module):
     self.device = config.device
     self.tfstep = tfstep
     self.encoder = common.Encoder(shapes, **config.encoder)
+    #goal
+    _shapes = shapes.copy()
+    _shapes['observation'] = (24,)
+    self.g_encoder = common.Encoder(_shapes, **config.g_encoder)
+    #
     # Computing embed dim
     with torch.no_grad():
       zeros = {k: torch.zeros( (1,) + v) for k, v in shapes.items()}
       outs = self.encoder(zeros)
       embed_dim = outs.shape[1]
+      #goal
+      g_zeros = {k: torch.zeros( (1,) + v) for k, v in _shapes.items()}
+      g_outs = self.g_encoder(g_zeros)
+      g_embed_dim = g_outs.shape[1]
+      #
     self.embed_dim = embed_dim
     self.rssm = common.EnsembleRSSM(**config.rssm, action_dim=act_dim, embed_dim=embed_dim, device=self.device)
+    #goal
+    self.g_rssm = common.EnsembleRSSM(**config.rssm, action_dim=act_dim, embed_dim=g_embed_dim, device=self.device)
+    #
     self.heads = {}
     self._use_amp = (config.precision == 16)
     inp_size = config.rssm.deter 
@@ -34,6 +47,9 @@ class WorldModel(nn.Module):
     self.inp_size = inp_size
     self.heads['decoder'] = common.Decoder(shapes, **config.decoder, embed_dim=inp_size)
     self.heads['reward'] = common.MLP(inp_size, (1,), **config.reward_head)
+    #goal
+    self.heads['g_reward'] = common.MLP(inp_size*2, (1,), **config.reward_head)
+    #
     for name in config.grad_heads:
       assert name in self.heads, name
     self.grad_heads = config.grad_heads
@@ -58,6 +74,10 @@ class WorldModel(nn.Module):
     losses = {'kl': kl_loss}
     feat = self.rssm.get_feat(post)
     for name, head in self.heads.items():
+      if name == 'g_reward' and feat.shape[-1] == self.inp_size:
+        continue
+      if name == 'reward' and feat.shape[-1] != self.inp_size:
+        continue
       grad_head = (name in self.grad_heads)
       inp = feat if grad_head else stop_gradient(feat)
       out = head(inp)

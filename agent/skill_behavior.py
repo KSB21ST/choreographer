@@ -148,8 +148,8 @@ class MetaCtrlAC(nn.Module):
       inp_size += config.rssm.stoch
 
     actor_config = {'layers': 4, 'units': 400, 'norm': 'none', 'dist': 'trunc_normal' }
-    actor_config['dist'] = 'onehot' 
-    self.actor = common.MLP(inp_size, skill_dim, **actor_config)
+    actor_config['dist'] = 'onehot'
+    self.actor = common.MLP(inp_size*2, skill_dim, **actor_config)
     self.critic = common.MLP(inp_size, (1,), **self.cfg.critic)
     if self.cfg.slow_target:
       self._target_critic = common.MLP(inp_size, (1,), **self.cfg.critic)
@@ -164,6 +164,9 @@ class MetaCtrlAC(nn.Module):
     self.executor_opt = common.Optimizer('executor_actor', self.skill_executor.actor.parameters(), **self.cfg.actor_opt, use_amp=self._use_amp)
     self.critic_opt = common.Optimizer('selector_critic', self.critic.parameters(), **self.cfg.critic_opt, use_amp=self._use_amp)
     self.rewnorm = common.StreamNorm(**self.cfg.reward_norm, device=self.device)
+    #goal
+    self.goal_feat = None
+    #
 
   def update(self, world_model, start, is_terminal, reward_fn):
     metrics = {}
@@ -171,6 +174,10 @@ class MetaCtrlAC(nn.Module):
     with common.RequiresGrad(self.actor):
       with common.RequiresGrad(self.skill_executor.actor):
         with torch.cuda.amp.autocast(enabled=self._use_amp):
+          #goal
+          if 'feat' in start:
+            self.goal_feat = start['feat']
+          #
           seq = self.selector_imagine(world_model, self.actor, start, is_terminal, hor)
           reward = reward_fn(seq)
           seq['reward'], mets1 = self.rewnorm(reward)
@@ -193,7 +200,12 @@ class MetaCtrlAC(nn.Module):
     metrics = {}
     skill = stop_gradient(seq['skill'])
     action = stop_gradient(seq['action'])
-    policy = self.actor(stop_gradient(seq['feat'][:-2]))
+    #goal
+    g_shape = stop_gradient(seq['feat'][:-2]).shape
+    # policy = self.actor(stop_gradient(seq['feat'][:-2]))
+    policy_inp = torch.cat((stop_gradient(seq['feat'][:-2]), self.goal_feat.repeat(g_shape[0], g_shape[1], 1)), dim=2)
+    policy = self.actor(policy_inp)
+    #
     low_inp = stop_gradient(torch.cat([seq['feat'][:-2], skill[:-2]], dim=-1))
     low_policy = self.skill_executor.actor(low_inp)
     if self.cfg.actor_grad == 'dynamics':
@@ -265,23 +277,29 @@ class MetaCtrlAC(nn.Module):
   def selector_imagine(self, wm, policy, start, is_terminal, horizon, eval_policy=False):
     flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
     start = {k: flatten(v) for k, v in start.items()}
+    #goal
+    goal_feat = self.goal_feat
+    #
     start['feat'] = wm.rssm.get_feat(start)
     inp = start['feat']
-    fake_skill = policy(inp).mean
+    #goal
+    policy_inp = torch.cat((inp, goal_feat.repeat(inp.shape[0], 1)), dim=1)
+    fake_skill = policy(policy_inp).mean
+    #
     fake_action = self.skill_executor.actor(torch.cat([inp, fake_skill], dim=-1)).mean
     B, _ = fake_action.shape
     start['skill'] = torch.zeros_like(fake_skill, device=wm.device) 
-    start['action'] = torch.zeros_like(fake_action, device=wm.device) 
+    start['action'] = torch.zeros_like(fake_action, device=wm.device)
     seq = {k: [v] for k, v in start.items()}
     for h in range(horizon):
-      inp = stop_gradient(seq['feat'][-1]) 
+      inp = stop_gradient(seq['feat'][-1])
+      policy_inp = torch.cat((inp, goal_feat.repeat(inp.shape[0], 1)), dim=1)
       if h % self.skill_len == 0:
-        skill = policy(inp)
+        skill = policy(policy_inp)
         if not eval_policy:
           skill = skill.sample()
         else:
           skill = skill.mode()
-
       executor_inp = stop_gradient(torch.cat([inp, skill], dim=-1)) 
       action = self.skill_executor.actor(executor_inp)
       action = action.sample() if not eval_policy else action.mean 

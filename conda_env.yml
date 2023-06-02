@@ -1,4 +1,4 @@
-name: choreo
+name: choreo2
 channels:
   - defaults
 dependencies:
@@ -9,10 +9,6 @@ dependencies:
   - pyparsing=2.4.7
   - jupyterlab=3.0.14
   - scikit-image=0.18.1
-  - nvidia::cudatoolkit=11.1
-  - pytorch::pytorch
-  - pytorch::torchvision
-  - pytorch::torchaudio
   - pip:
     - termcolor==1.1.0
     - dm_control
@@ -30,4 +26,3 @@ dependencies:
     - opencv-python
     - wandb==0.11.1
     - moviepy==1.0.3
-    - git+https://github.com/rlworkgroup/metaworld.git@18118a28c06893da0f363786696cc792457b062b#egg=metaworld

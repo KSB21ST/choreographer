@@ -207,6 +207,10 @@ class Workspace:
             # try to update the agent
             if not seed_until_step(self.global_step):
                 if should_train_step(self.global_step):
+                    # print(
+                    #     {k: v if not hasattr(v, "shape") else v.shape for k, v in next(self.replay_iter).items()}
+                    # )
+                    # {'observation': torch.Size([50, 50, 3, 64, 64]), 'action': torch.Size([50, 50, 6]), 'reward': torch.Size([50, 50, 1]), 'discount': torch.Size([50, 50, 1]), 'skill': torch.Size([50, 50, 64]), 'is_first': torch.Size([50, 50]), 'is_terminal': torch.Size([50, 50, 1])}
                     metrics = self.agent.update(next(self.replay_iter), self.global_step)[1] 
                 if should_log_scalars(self.global_step):
                     self.logger.log_metrics(metrics, self.global_frame, ty='train')
@@ -235,7 +239,7 @@ class Workspace:
             cfg.experiment, cfg.agent.name, cfg.domain, cfg.obs_type,
             str(cfg.seed)
         ])
-        wandb.init(project=cfg.project_name + "_pretrain", group=cfg.agent.name, name=exp_name)
+        wandb.init(project=cfg.project_name + "_pretrain", group=cfg.agent.name, name=exp_name, mode='disabled')
         wandb.config.update(cfg)
         self.wandb_run_id = wandb.run.id
 

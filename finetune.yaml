@@ -18,7 +18,8 @@ num_eval_episodes: 10
 # pretrained
 snapshot_ts: 100000
 snapshot_base_dir: ./pretrained_models
-custom_snap_dir: none
+# custom_snap_dir: none
+custom_snap_dir: /home/sbkim/choreographer/exp_local/2023.06.01/214150_choreo
 # replay buffer
 replay_buffer_size: 1000000
 # misc
@@ -45,6 +46,11 @@ save_ft_model: true
 from_offline: false
 dataset: null
 collection_method: null
+#
+
+# Goal
+goal_mode: 's' # x, s, z
+dataset_dir: ~/choreographer/datasets/walker/proto/buffer
 #
 
 hydra:

@@ -12,8 +12,8 @@ from pathlib import Path
 import hydra
 import numpy as np
 import torch
-import wandb
 from dm_env import specs
+import wandb
 
 import envs
 import utils
@@ -63,6 +63,7 @@ class Workspace:
         # # create agent 
         self.agent = make_agent(self.eval_env.obs_space,
                                 self.eval_env.action_spec(), cfg, cfg.agent)
+
 
         if self.cfg.load_wm_dir != '/':
             pretrained_agent = self.load_wm()['agent']
@@ -191,7 +192,7 @@ class Workspace:
             cfg.experiment, cfg.agent.name, cfg.domain, cfg.obs_type,
             str(cfg.seed)
         ])
-        wandb.init(project=cfg.project_name + "_offline", group=cfg.agent.name, name=exp_name)
+        wandb.init(project=cfg.project_name + "_offline", group=cfg.agent.name, name=exp_name, config=cfg, mode="disabled")
         wandb.config.update(cfg)
         self.wandb_run_id = wandb.run.id
 
@@ -226,7 +227,7 @@ class Workspace:
                     cfg.experiment, cfg.agent.name, cfg.domain, cfg.obs_type,
                     str(cfg.seed)
                 ])
-                wandb.init(project=cfg.project_name + "_offline", group=cfg.agent.name, name=exp_name, id=v, resume="must")
+                # wandb.init(project=cfg.project_name + "_offline", group=cfg.agent.name, name=exp_name, id=v, resume="must")
 
     def load_wm(self):
         snapshot_base_dir = Path(self.cfg.load_wm_dir) 

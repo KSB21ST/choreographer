@@ -36,7 +36,8 @@ load_wm_dir: /
 loaded_agent: choreo
 snapshot_ts: 200000
 
-dataset_dir: ~/urlb_datasets/${dataset}/${domain}/${collection_method}/buffer
+# dataset_dir: ~/urlb_datasets/${dataset}/${domain}/${collection_method}/buffer
+dataset_dir: ~/choreographer/datasets/walker/proto/buffer
 dataset: exorl
 collection_method: proto
 

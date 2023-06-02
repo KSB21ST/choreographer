@@ -79,10 +79,27 @@ class ChoreoAgent(nn.Module):
     self._env_behavior.rewnorm = common.StreamNorm(**{"momentum": 1.00, "scale": 1.0, "eps": 1e-8}, device=self.device)
     self._skill_behavior.rewnorm = common.StreamNorm(**{"momentum": 1.00, "scale": 1.0, "eps": 1e-8}, device=self.device)
 
-  def act(self, obs, meta, step, eval_mode, state):
+  # obs = self.train_env.reset()
+  def act(self, obs, meta, step, eval_mode, state, goal_mode='s'):
+    # goal
+    has_goal = False
+    if 'goal' in obs:
+      has_goal = True
+      tmp_goal = obs.pop('goal')
+      if goal_mode == 'x':
+        tmp_goal = tmp_goal
+      elif goal_mode == 's':
+        embed_goal = self.wm.g_encoder(self.wm.preprocess(tmp_goal))
+        post, _ = self.wm.g_rssm.observe(
+          embed_goal, tmp_goal['action'], tmp_goal['is_first'])
+        start = {k: stop_gradient(v) for k,v in post.items()}
+        feat_goal = stop_gradient(self.wm.g_rssm.get_feat(start))
+        # feat_goal <class 'torch.Tensor'> torch.Size([1, 1, 1224])
+        
     # Infer current state
     obs = {k : torch.as_tensor(np.copy(v), device=self.device).unsqueeze(0) for k, v in obs.items()}
     meta = {k : torch.as_tensor(np.copy(v), device=self.device).unsqueeze(0) for k, v in meta.items()}
+      
     if state is None:
       latent = self.wm.rssm.initial(len(obs['reward']))
       action = torch.zeros((len(obs['reward']),) + self.act_spec.shape, device=self.device)
@@ -91,7 +108,10 @@ class ChoreoAgent(nn.Module):
     embed = self.wm.encoder(self.wm.preprocess(obs))
     should_sample = (not eval_mode) or (not self.cfg.eval_state_mean)
     latent, _ = self.wm.rssm.obs_step(latent, action, embed, obs['is_first'], should_sample)
-    feat = self.wm.rssm.get_feat(latent)
+    feat = self.wm.rssm.get_feat(latent) #feat = s_t = pi_wm(s_t+1 | latent = action <- from x_t)
+    # print(type(feat), feat.shape) <class 'torch.Tensor'> torch.Size([1, 1224])
+    # print(type(embed), embed.shape) <class 'torch.Tensor'> torch.Size([1, 1536])
+      
 
     # PT stage
     # -> LBS Exploration 
@@ -100,7 +120,9 @@ class ChoreoAgent(nn.Module):
         actor = self._env_behavior.actor(feat)
         action = actor.mean
       else:
-        actor = self._env_behavior.actor(feat)
+        # self.actor = common.MLP(inp_size, skill_dim, **actor_config)
+        # self.replay_storage.add(time_step = obs, meta)
+        actor = self._env_behavior.actor(feat) # z ~ pi_meta(z|s_t) so add goal here? self._env_behavior.actor(feat, goal)
         action = actor.sample()
       new_state = (latent, action)
       return action.cpu().numpy()[0], new_state
@@ -111,13 +133,18 @@ class ChoreoAgent(nn.Module):
     # Is FT AND step > num_init_frames and reward was already found 
     # -> use the meta-controller
     if is_adaptation and (not self.reward_smoothing):
+      #goal
+      if has_goal and self.is_ft:
+        feat_goal = feat_goal.reshape(list(feat.shape))
+        feat_goal = torch.cat((feat, feat_goal), dim=1)
+        #
       if eval_mode:
-        skill = self._env_behavior.actor(feat)
+        skill = self._env_behavior.actor(feat_goal)
         skill = skill.mode()
         action = self._skill_behavior.actor(torch.cat([feat, skill], dim=-1))
         action = action.mean
       else:
-        skill = self._env_behavior.actor(feat)
+        skill = self._env_behavior.actor(feat_goal)
         skill = skill.sample()
         action = self._skill_behavior.actor(torch.cat([feat, skill], dim=-1))
         action = action.sample()
@@ -197,7 +224,7 @@ class ChoreoAgent(nn.Module):
     metrics.update(mets)
     return state, outputs, metrics
 
-  def update(self, data, step):
+  def update(self, data, step, goal = None):
     # Train WM
     metrics = {}
     state, outputs, mets = self.wm.update(data, state=None)
@@ -224,7 +251,16 @@ class ChoreoAgent(nn.Module):
 
       # Train task AC
       if not self.reward_smoothing:
-        reward_fn = lambda seq: self.wm.heads['reward'](seq['feat']).mean 
+        #goal
+        if goal:
+          embed_goal = self.wm.g_encoder(self.wm.preprocess(goal))
+          g_post, _ = self.wm.g_rssm.observe(
+            embed_goal, goal['action'], goal['is_first'])
+          g_start = {k: stop_gradient(v) for k,v in g_post.items()}
+          feat_goal = stop_gradient(self.wm.g_rssm.get_feat(g_start))
+          start['feat'] = feat_goal.reshape(1, -1)
+        #
+        reward_fn = lambda seq: self.wm.heads['reward'](seq['feat']).mean
         metrics.update(self._env_behavior.update(
             self.wm, start, data['is_terminal'], reward_fn))
     return state, metrics

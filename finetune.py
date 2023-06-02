@@ -19,6 +19,7 @@ import utils
 from logger import Logger
 from replay import ReplayBuffer, make_replay_loader
 from hydra.utils import get_original_cwd, to_absolute_path
+import numpy as np
 
 torch.backends.cudnn.benchmark = True
 
@@ -85,6 +86,13 @@ class Workspace:
                                                   self.workdir / 'buffer',
                                                   length=cfg.batch_length, **cfg.replay,
                                                   device=cfg.device)
+        
+        self.goal_storage = ReplayBuffer(data_specs, meta_specs,
+                                                  Path(cfg.dataset_dir),
+                                                  length=1, **cfg.replay,
+                                                  device=cfg.device,
+                                                  load_first=True)
+        
 
         if self.cfg.save_eval_episodes:
             self.eval_storage = ReplayBuffer(data_specs, meta_specs,
@@ -95,6 +103,10 @@ class Workspace:
         self.replay_loader = make_replay_loader(self.replay_storage,
                                                 cfg.batch_size,)
         self._replay_iter = None
+        
+        self.goal_loader = make_replay_loader(self.goal_storage,
+                                                1,)
+        self._goal_iter = None
 
         # create video recorders
 
@@ -120,6 +132,12 @@ class Workspace:
         if self._replay_iter is None:
             self._replay_iter = iter(self.replay_loader)
         return self._replay_iter
+    
+    @property
+    def goal_iter(self):
+        if self._goal_iter is None:
+            self._goal_iter = iter(self.goal_loader)
+        return self._goal_iter
 
     def eval(self):
         step, episode, total_reward, ep_rew = 0, 0, 0, 0
@@ -219,6 +237,15 @@ class Workspace:
                     time_step = self.train_env.reset_with_task_id(self.cfg.task_id)
                 else:
                     time_step = self.train_env.reset()
+                # print(
+                #     {k: v if not hasattr(v, "shape") else v.shape for k, v in time_step.items()}
+                # )
+                # print(
+                #     {k: type(v) for k, v in time_step.items()}
+                # )
+                # {'reward': 0.0, 'is_first': True, 'is_last': False, 'is_terminal': False, 'observation': (3, 64, 64), 'action': (6,), 'discount': 1.0}
+                # {'reward': 0.0, 'is_first': True, 'is_last': False, 'is_terminal': False, 'observation': dtype('uint8'), 'action': dtype('float32'), 'discount': 1.0}
+                # {'reward': <class 'float'>, 'is_first': <class 'bool'>, 'is_last': <class 'bool'>, 'is_terminal': <class 'bool'>, 'observation': <class 'numpy.ndarray'>, 'action': <class 'numpy.ndarray'>, 'discount': <class 'float'>}
                 agent_state = None # Resetting agent's latent state
                 meta = self.agent.init_meta()
                 self.replay_storage.add(time_step, meta) 
@@ -243,16 +270,20 @@ class Workspace:
 
             # sample action
             with torch.no_grad(), utils.eval_mode(self.agent):
+                # tmp_goal = np.zeros((3, 64, 64), dtype='uint8')
+                tmp_goal = next(self.goal_iter)
+                time_step['goal'] = tmp_goal
                 action, agent_state = self.agent.act(time_step, 
                                         meta,
                                         self.global_step,
                                         eval_mode=False,
-                                        state=agent_state)
+                                        state=agent_state,
+                                        goal_mode=self.cfg.goal_mode)
 
             # try to update the agent
             if not seed_until_step(self.global_step):
                 if should_train_step(self.global_step):
-                    metrics = self.agent.update(next(self.replay_iter), self.global_step)[1] 
+                    metrics = self.agent.update(next(self.replay_iter), self.global_step, tmp_goal)[1] 
                 if should_log_scalars(self.global_step):
                     self.logger.log_metrics(metrics, self.global_frame, ty='train')
                 if self.global_step > 0 and should_log_recon(self.global_step):
@@ -279,9 +310,11 @@ class Workspace:
             domain, _ = self.cfg.task.split('_', 1)
             snapshot_dir = snapshot_base_dir / self.cfg.obs_type / domain / self.cfg.agent.name
         if self.cfg.custom_snap_dir != 'none':
-            snapshot_dir = Path(self.cfg.custom_snap_dir) 
-        snapshot = snapshot_dir / str(
-            self.cfg.seed) / f'snapshot_{self.cfg.snapshot_ts}.pt'
+            # snapshot_dir = Path(self.cfg.custom_snap_dir) 
+            # snapshot = snapshot_dir / str(
+            #     self.cfg.seed) / f'snapshot_{self.cfg.snapshot_ts}.pt'
+            snapshot_dir = Path(self.cfg.custom_snap_dir)
+        snapshot = snapshot_dir / 'last_snapshot.pt'
             
         def try_load(seed):
             if not snapshot.exists():
@@ -348,7 +381,7 @@ class Workspace:
             cfg.experiment, cfg.agent.name, cfg.task, cfg.obs_type,
             str(cfg.seed)
         ])
-        wandb.init(project=cfg.project_name + "_finetune", group=cfg.agent.name, name=exp_name)
+        wandb.init(project=cfg.project_name + "_finetune", group=cfg.agent.name, name=exp_name, mode="disabled")
         wandb.config.update(cfg)
         self.wandb_run_id = wandb.run.id
 
