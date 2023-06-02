@@ -160,6 +160,8 @@ class Workspace:
             if self.cfg.save_eval_episodes: self.eval_storage.add(time_step, meta) 
             while not time_step['is_last']:
                 with torch.no_grad(), utils.eval_mode(self.agent):
+                    tmp_goal = next(self.goal_iter)
+                    time_step['goal'] = tmp_goal
                     action, agent_state = self.agent.act(time_step, 
                                             meta,
                                             self.global_step,
@@ -314,7 +316,8 @@ class Workspace:
             # snapshot = snapshot_dir / str(
             #     self.cfg.seed) / f'snapshot_{self.cfg.snapshot_ts}.pt'
             snapshot_dir = Path(self.cfg.custom_snap_dir)
-        snapshot = snapshot_dir / 'last_snapshot.pt'
+        snapshot = snapshot_dir / str(
+            self.cfg.seed) / f'snapshot_{self.cfg.snapshot_ts}.pt'
             
         def try_load(seed):
             if not snapshot.exists():
@@ -373,7 +376,7 @@ class Workspace:
                     cfg.experiment, cfg.agent.name, cfg.task, cfg.obs_type,
                     str(cfg.seed)
                 ])
-                wandb.init(project=cfg.project_name + "_finetune", group=cfg.agent.name, name=exp_name, id=v, resume="must")
+                wandb.init(project=cfg.project_name + "_finetune", entity='iu_mas',group=cfg.agent.name, name=exp_name, id=v, resume="must")
 
     def setup_wandb(self):
         cfg = self.cfg
@@ -381,7 +384,7 @@ class Workspace:
             cfg.experiment, cfg.agent.name, cfg.task, cfg.obs_type,
             str(cfg.seed)
         ])
-        wandb.init(project=cfg.project_name + "_finetune", group=cfg.agent.name, name=exp_name, mode="disabled")
+        wandb.init(project=cfg.project_name + "_finetune", entity='iu_mas', group=cfg.agent.name, name=exp_name, mode="online")
         wandb.config.update(cfg)
         self.wandb_run_id = wandb.run.id
 
